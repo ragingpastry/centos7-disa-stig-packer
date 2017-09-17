@@ -1,0 +1,191 @@
+---
+ - hosts: all # set required host
+   user: vagrant
+   become: True
+   tasks:
+
+    - name: "Check existence of yum on Fedora"
+      stat:
+        path: /etc/yum.conf
+      register: yum_config_file
+      when: ansible_distribution == "Fedora"
+    # We can have yum also in Fedora, but probably not forever
+    - name: Ensure GPG check is globally activated (yum)
+      ini_file:
+        dest: "{{item}}"
+        section: main
+        option: gpgcheck
+        value: 1
+        create: False
+      with_items: "/etc/yum.conf"
+      when: ansible_distribution == "CentOS" or yum_config_file.stat.exists
+    - name: Ensure GPG check is globally activated (dnf)
+      ini_file:
+        dest: "{{item}}"
+        section: main
+        option: gpgcheck
+        value: 1
+        create: False
+      with_items: "/etc/dnf/dnf.conf"
+      when: ansible_distribution == "Fedora"
+
+    - name: "Read list of files with incorrect permissions"
+      shell: "rpm -Va | grep '^.M' | sed -r 's;^.*\\s+(.+);\\1;g'"
+      register: files_with_incorrect_permissions
+      failed_when: False
+      changed_when: False
+    - name: "Correct file permissions with RPM"
+      shell: "rpm --setperms $(rpm -qf '{{item}}')"
+      with_items: "{{ files_with_incorrect_permissions.stdout_lines }}"
+      when: files_with_incorrect_permissions.stdout_lines | length > 0
+
+    - name: "Set fact: Package manager reinstall command (dnf)"
+      set_fact:
+        package_manager_reinstall_cmd: dnf reinstall -y
+      when: ansible_distribution == "Fedora"
+    - name: "Set fact: Package manager reinstall command (yum)"
+      set_fact:
+        package_manager_reinstall_cmd: yum reinstall -y
+      when: ansible_distribution == "CentOS"
+    - name: "Read files with incorrect hash"
+      shell: "rpm -Va | grep -E '^..5.* /(bin|sbin|lib|lib64|usr)/' | sed -r 's;^.*\\s+(.+);\\1;g'"
+      register: files_with_incorrect_hash
+      changed_when: False
+      when: package_manager_reinstall_cmd is defined
+    - name: "Reinstall packages of files with incorrect hash"
+      shell: "{{package_manager_reinstall_cmd}} $(rpm -qf '{{item}}')"
+      with_items: "{{ files_with_incorrect_hash.stdout_lines }}"
+      when: package_manager_reinstall_cmd is defined and (files_with_incorrect_hash.stdout_lines | length > 0)
+
+    - name: Ensure kernel module 'usb-storage' is disabled
+      lineinfile:
+        create=yes
+        dest="/etc/modprobe.d/{{item}}.conf"
+        regexp="{{item}}"
+        line="install {{item}} /bin/true"
+      with_items:
+        - usb-storage
+
+    - name: Disable service autofs
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      failed_when: False
+      with_items:
+        - autofs
+
+    - name: "Prevent Log In to Accounts With Empty Password"
+      replace:
+        dest: /etc/pam.d/system-auth
+        regexp: 'nullok\s*'
+        replace: ''
+
+    - name: "Disable POST password expiration"
+      lineinfile:
+        create=yes
+        dest="/etc/default/useradd"
+        regexp="^INACTIVE"
+        line="INACTIVE=-1"
+
+    - name: Ensure screen is installed
+      package:
+        name="{{item}}"
+        state=present
+      with_items:
+        - screen
+
+    - name: Enable service firewalld
+      service:
+        name="{{item}}"
+        enabled="yes"
+        state="started"
+      with_items:
+        - firewalld
+
+    - name: Enable service auditd
+      service:
+        name="{{item}}"
+        enabled="yes"
+        state="started"
+      with_items:
+        - auditd
+
+    - name: Ensure telnet-server is removed
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - telnet-server
+
+    - name: Ensure rsh-server is removed
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - rsh-server
+
+    - name: Ensure ypserv is removed
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - ypserv
+
+    - name: Ensure tftp-server is removed
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - tftp-server
+
+    - name: Disable service kdump
+      service:
+        name="{{item}}"
+        enabled="no"
+        state="stopped"
+      failed_when: False
+      with_items:
+        - kdump
+
+    - name: Ensure openssh-server is installed
+      package:
+        name="{{item}}"
+        state=present
+      with_items:
+        - openssh-server
+
+    - name: "SSHD: Set client alive interval"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^ClientAliveInterval"
+        line="ClientAliveInterval 600"
+
+    - name: "SSHD: Disable empty passwords"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^PermitEmptyPasswords"
+        line="PermitEmptyPasswords no"
+
+    - name: "SSHD: Enable warning banner"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^Banner"
+        line="Banner /etc/issue"
+
+    - name: "SSHD: Do not permit user environment"
+      lineinfile:
+        create=yes
+        dest="/etc/ssh/sshd_config"
+        regexp="^PermitUserEnvironment"
+        line="PermitUserEnvironment no"
+
+    - name: Ensure vsftpd is removed
+      package:
+        name="{{item}}"
+        state=absent
+      with_items:
+        - vsftpd
